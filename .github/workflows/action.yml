@@ -10,4 +10,4 @@ jobs:
       - name: run shell script
         run: echo commit hash is ${{ github.sha }}
       - name: Build the Docker image
-        run: docker build . --file Dockerfile --tag my-image-name:${{ github.sha }}
+        run: docker build . --file user-service/Dockerfile --tag my-image-name:${{ github.sha }}
