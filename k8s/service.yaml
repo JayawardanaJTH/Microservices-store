@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  creationTimestamp: null
+  labels:
+    app: ctse-user-service
+  name: ctse-user-service
+spec:
+  ports:
+  - port: 9002
+    protocol: TCP
+    targetPort: 9002
+  selector:
+    app: ctse-user-service
+status:
+  loadBalancer: {}
