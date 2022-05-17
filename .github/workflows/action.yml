@@ -10,7 +10,7 @@ on:
     branches: [ main ]
 
 env:
-  PROJECT_ID: ${{ secrets.GKE_PROJECT}}
+  PROJECT_ID: ctse-350307
   GKE_CLUSTER: cluster-ctse
   GKE_ZONE: us-central1-c
 
@@ -38,70 +38,45 @@ jobs:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
 
-  deployment:
-    name: Deploy backend to cluster
-    runs-on: 'ubuntu-latest'
-    needs: build
-    steps:
-    - name: Checkout working branch
-      uses: actions/checkout@v1
 
-    - name: Set Release version
-      run: |
-        echo ::set-env name=RELEASE_VERSION::$(echo ${GITHUB_REF} | 
-                            sed -e "s/refs\/tags\///g" | sed -e "s/\//-/g")
-    - name: Cluster env for production
-      if: "!github.event.release.prerelease"
-      run: |
-        echo ::set-env name=CLUSTER_ENV::prod
-    - name: Cluster env for staging/dev
-      if: "github.event.release.prerelease"
-      run: |
-        BRANCH=$(git branch -r --contains ${GITHUB_SHA} | grep "")
-        MASTER_BRANCH_NAME='origin/main'
-        if [[ "$BRANCH" == *"$MASTER_BRANCH_NAME"* ]]; then
-          echo ::set-env name=CLUSTER_ENV::stag
-        else
-          echo ::set-env name=CLUSTER_ENV::dev
-        fi
-    - name: Set Cluster credentials
-      run: |
-        echo ::set-env name=CLUSTER_NAME::acme-gke-${{ env.GKE_CLUSTER }}
-        echo ::set-env name=CLUSTER_ZONE::us-central1-c
-        echo ::set-env name=PROJECT_NAME::ctse-350307
-    - name: Install kubectl
-      run: |
-        sudo apt-get install kubectl
-    - name: Install helm
-      run: |
-        curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3
-        chmod 700 get_helm.sh
-        ./get_helm.sh
-    - name: Deploy Release on cluster
-      env:
-        GCLOUD_KEY: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
-      run: 
-        echo "$GCLOUD_KEY" | base64 --decode > ${HOME}/gcloud.json
-        gcloud auth activate-service-account --key-file=${HOME}/gcloud.json
-        gcloud auth configure-docker
-        gcloud container clusters get-credentials \
-        ${{ env.CLUSTER_NAME }} --zone 
-        ${{ env.CLUSTER_ZONE }} --project ${{ env.PROJECT_NAME }}
-        # install/upgrade helm chart
-        helm upgrade --install backend ./deploy/helm/backend \
-                  --values ./deploy/helm/backend/env.values.${{ env.CLUSTER_ENV }}.yaml \
-                  --set env_values.image_version=${{ env.RELEASE_VERSION }
-#   Deploy:
-#     needs: build
-#     runs-on: ubuntu-latest
-#     steps:
-#     - uses: actions/checkout@master
-#     - name: kubectl - Google Cloud GKE cluster.
-#       uses: ameydev/gke-kubectl-action@master
-#       env:
-#         PROJECT_ID: ctse-350307
-#         APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
-#         CLUSTER_NAME: ${{ env.GKE_CLUSTER }}
-#         ZONE_NAME: ${{ env.GKE_ZONE }}
-#       with:
-#         args: apply -f k8s/
+  Deploy:
+    needs: build
+    name: Setup and Deploy
+    runs-on: ubuntu-latest
+
+    # Add "id-token" with the intended permissions.
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    # Configure Workload Identity Federation and generate an access token.
+    - id: 'auth'
+      name: 'Authenticate to Google Cloud'
+      uses: 'google-github-actions/auth@v0'
+      with:
+        workload_identity_provider: 'projects/123456789/locations/global/workloadIdentityPools/my-pool/providers/my-provider'
+        service_account: 'my-service-account@my-project.iam.gserviceaccount.com'
+
+    # Alternative option - authentication via credentials json
+    # - id: 'auth'
+    #   uses: 'google-github-actions/auth@v0'
+    #   with:
+    #     credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
+
+    # Setup gcloud CLI
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v0
+
+    # Get the GKE credentials so we can deploy to the cluster
+    - run: |-
+        gcloud container clusters get-credentials "$GKE_CLUSTER" --zone "$GKE_ZONE"
+    # Deploy sample image to the GKE cluster
+    - name: Deploy
+      run: |-
+        kubectl apply -f deployment.yml
+        kubectl rollout status deployment/$DEPLOYMENT_NAME
+        kubectl get services -o wide
